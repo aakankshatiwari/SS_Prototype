@@ -88,12 +88,20 @@ def save_thumbnail(img_pil, fname):
 
 def append_report_to_csv(report):
     df = st.session_state.reports_df
-    df = df.append(report, ignore_index=True)
+
+    # Convert the dict to a single-row DataFrame
+    new_row = pd.DataFrame([report])
+
+    # Use pd.concat instead of deprecated .append()
+    df = pd.concat([df, new_row], ignore_index=True)
+
     st.session_state.reports_df = df
+
     try:
         df.to_csv(REPORT_CSV, index=False)
     except Exception as e:
         st.warning(f"Could not persist CSV: {e}")
+
 
 def get_mock_co2_saved(num_reports):
     """
