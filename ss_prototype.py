@@ -7,16 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1eIunOnU6QwNPp_FOed2G9bZGzgcaiDt3
 """
 
-"""
-Smart Swachh - Minimal Streamlit Prototype
-Features:
-- Citizen can upload an image + provide lat/lon (or enter address)
-- On-device lightweight heuristic classifies image as 'Wet/Organic' or 'Dry/Other'
-  (color-channel heuristic; intentionally simple for hackathon demo)
-- Saves report (thumbnail + metadata) to local folder and CSV datastore
-- Dashboard: map of reports, counts, simple CO2 savings estimate (mock)
-No heavy ML or GPU required — runs on CPU / low-power hardware.
-"""
 
 import streamlit as st
 from PIL import Image, ImageOps
