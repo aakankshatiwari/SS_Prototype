@@ -1,23 +1,35 @@
 # -*- coding: utf-8 -*-
 """
 Smart Swachh Streamlit App
-Uses Euri AI to auto-classify waste images into categories and subcategories.
+Classifies uploaded waste images into categories and subcategories using Euri AI.
 """
 
+# =========================
+# IMPORTS
+# =========================
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import base64
 import os
 import json
-from euriai.langchain import create_chat_model
+
+# --- Auto-detect correct Euri AI import path ---
+try:
+    from euriai.langchain import create_chat_model
+except ImportError:
+    try:
+        from euri.langchain import create_chat_model
+    except ImportError:
+        from euriai import create_chat_model
+
 
 # =========================
 # CONFIGURATION
 # =========================
 CSV_FILE = "smart_swachh_reports.csv"
 
-# Define categories and subcategories
+# Define all waste categories and subcategories
 CATEGORIES = {
     "Plastic Waste": ["Bottles", "Cups", "Packaging", "Bags", "Straws"],
     "Paper Waste": ["Newspapers", "Cardboard", "Books", "Tissues"],
@@ -31,12 +43,12 @@ CATEGORIES = {
     "Other": ["General", "Mixed", "Uncategorized"]
 }
 
+
 # =========================
 # HELPER FUNCTIONS
 # =========================
-
 def save_report(data):
-    """Append a single report row to the CSV file."""
+    """Append a single report row to CSV file."""
     df_new = pd.DataFrame([data])
     if not os.path.exists(CSV_FILE):
         df_new.to_csv(CSV_FILE, index=False)
@@ -57,44 +69,47 @@ def classify_image_with_euri(image_file, api_key):
         image_base64 = base64.b64encode(image_file.read()).decode("utf-8")
         image_file.seek(0)
 
-        # Create chat model
+        # Initialize Euri chat model
         chat_model = create_chat_model(
             api_key=api_key,
             model="gpt-4.1-nano",
             temperature=0.2
         )
 
-        # Build prompt with category/subcategory structure
+        # Create category/subcategory list
         category_list = "\n".join(
             [f"- {cat}: {', '.join(subs)}" for cat, subs in CATEGORIES.items()]
         )
 
+        # Build prompt
         prompt = f"""
         You are a waste classification AI.
-        Analyze the attached image (base64 format provided below) and determine the most suitable category and subcategory.
+        Analyze the attached image (in base64 format below) and determine the best-matching
+        category and subcategory from the list below.
 
         Categories and Subcategories:
         {category_list}
 
-        Respond only in JSON format:
+        Respond strictly in JSON format:
         {{
             "category": "Category Name",
             "subcategory": "Subcategory Name"
         }}
 
-        Base64 Image (truncated): {image_base64[:200]}...
+        Base64 image (truncated): {image_base64[:200]}...
         """
 
-        # Send to Euri AI
+        # Get AI response
         response = chat_model.invoke(prompt)
         result_text = response.content.strip()
 
-        # Extract JSON safely
+        # Clean up Markdown-style output if present
         if result_text.startswith("```"):
             result_text = result_text.split("```")[1]
             if result_text.strip().startswith("json"):
                 result_text = result_text[4:].strip()
 
+        # Parse JSON safely
         result_json = json.loads(result_text)
         category = result_json.get("category", "Other")
         subcategory = result_json.get("subcategory", "General")
@@ -107,34 +122,33 @@ def classify_image_with_euri(image_file, api_key):
 # =========================
 # STREAMLIT UI
 # =========================
-
 st.set_page_config(page_title="Smart Swachh Report", page_icon="♻️", layout="wide")
 st.title("♻️ Smart Swachh Report System")
-st.caption("Upload an image and let Euri AI classify the waste category and subcategory automatically.")
+st.caption("Upload an image and let Euri AI automatically classify the waste type.")
 
 # Sidebar for API Key
 st.sidebar.header("🔐 API Configuration")
-api_key = st.sidebar.text_input("Enter your Euri API Key", type="password")
+api_key = st.sidebar.text_input("Enter your Euri API Key", type="password", value=os.getenv("EURI_API_KEY", ""))
 
-# Report Form
+# Form for waste reporting
 with st.form("waste_form", clear_on_submit=True):
     st.subheader("🧾 Waste Report Form")
 
     col1, col2 = st.columns(2)
+
     with col1:
-        reporter_name = st.text_input("Reporter Name")
-        location = st.text_input("Location (City/Area)")
+        reporter_name = st.text_input("Reporter Name *")
+        location = st.text_input("Location (City/Area) *")
         date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with col2:
-        uploaded_photo = st.file_uploader("Upload Waste Image", type=["jpg", "jpeg", "png"])
-
+        uploaded_photo = st.file_uploader("Upload Waste Image *", type=["jpg", "jpeg", "png"])
         auto_classify = st.checkbox("Auto-classify using Euri AI")
 
         category = st.selectbox("Waste Category", [""] + list(CATEGORIES.keys()))
         subcategory = st.selectbox("Subcategory", [""])
 
-    # Auto-classification logic
+    # Auto classification section
     if auto_classify and uploaded_photo is not None:
         if not api_key:
             st.warning("Please enter your Euri API key in the sidebar to enable classification.")
@@ -142,15 +156,15 @@ with st.form("waste_form", clear_on_submit=True):
             with st.spinner("Classifying image with Euri AI..."):
                 category, subcategory, error = classify_image_with_euri(uploaded_photo, api_key)
                 if error:
-                    st.error(f"Classification failed: {error}")
+                    st.error(f"❌ Classification failed: {error}")
                 else:
                     st.success(f"✅ Classified as {category} → {subcategory}")
-                    # Update UI fields automatically (for display only)
-                    st.write(f"**Category:** {category}")
-                    st.write(f"**Subcategory:** {subcategory}")
+                    st.session_state["category"] = category
+                    st.session_state["subcategory"] = subcategory
+                    st.write(f"**Detected Category:** {category}")
+                    st.write(f"**Detected Subcategory:** {subcategory}")
 
-    # Description field
-    description = st.text_area("Additional Description")
+    description = st.text_area("Additional Description (optional)")
 
     # Submit button
     submitted = st.form_submit_button("Submit Report")
@@ -159,13 +173,12 @@ with st.form("waste_form", clear_on_submit=True):
         if not (reporter_name and location and uploaded_photo):
             st.error("Please fill all mandatory fields and upload an image.")
         else:
-            # Prepare data row
             report_data = {
                 "Reporter": reporter_name,
                 "Location": location,
                 "DateTime": date_time,
-                "Category": category or "Unspecified",
-                "Subcategory": subcategory or "Unspecified",
+                "Category": st.session_state.get("category", category or "Unspecified"),
+                "Subcategory": st.session_state.get("subcategory", subcategory or "Unspecified"),
                 "Description": description
             }
             save_report(report_data)
@@ -173,7 +186,7 @@ with st.form("waste_form", clear_on_submit=True):
 
 
 # =========================
-# DATA DISPLAY SECTION
+# DISPLAY SUBMITTED DATA
 # =========================
 st.subheader("📊 Submitted Reports")
 if os.path.exists(CSV_FILE):
