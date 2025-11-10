@@ -11,6 +11,8 @@ Original file is located at
 Smart Swachh - Citizen Waste Reporting Portal
 Enhanced version with OpenAI image classification
 """
+pip install -r requirements.txt
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, time
