@@ -1,0 +1,6 @@
+__pycache__/
+smart_swachh_reports.csv
+.env
+*.png
+*.jpg
+*.jpeg
