@@ -27,8 +27,7 @@ except ImportError:
             raise ImportError(
                 "❌ Euri AI SDK not found. Please install it using:\n"
                 "   pip install euriai\n\n"
-                "If you're running inside Euron platform, ensure the 'euriai' module is available."
-            ) from e
+                "If you're running inside Euron platform, ensure the 'euriai' module is available.") from e
 
 
 # =========================
