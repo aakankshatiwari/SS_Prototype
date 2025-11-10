@@ -1,9 +1,13 @@
+# -*- coding: utf-8 -*-
+"""Smart Swachh Portal – Fixed Version"""
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, time
 import os
 import re
 import base64
+import json
 
 # Try to import OpenAI, handle if not installed
 try:
@@ -35,7 +39,12 @@ CATEGORIES = {
                   "Kids Furniture", "Other Household Items"],
     "Fashion": ["Men", "Women", "Kids"],
     "Books, Sports & Hobbies": ["Books", "Gym & Fitness", "Musical Instruments",
-                                 "Sports Equipment", "Other Hobbies"]}
+                                 "Sports Equipment", "Other Hobbies"]
+}
+
+# ---------------------------------------------------------
+# Validation & Helper Functions
+# ---------------------------------------------------------
 
 def validate_phone(phone):
     """Validate Indian phone number format"""
@@ -70,34 +79,31 @@ def classify_image_with_openai(image_file, api_key):
 
         # Encode image
         base64_image = encode_image_to_base64(image_file)
-        image_file.seek(0)  # Reset again for later use
+        image_file.seek(0)
 
         # Initialize OpenAI client
         client = OpenAI(api_key=api_key)
 
-        # Create category list for prompt
+        # Prepare category list
         category_list = "\n".join([f"- {cat}: {', '.join(subs) if subs else 'No subcategories'}"
                                    for cat, subs in CATEGORIES.items()])
 
-        # Create prompt
-        prompt = f"""Analyze this image and classify it into ONE of the following categories and its appropriate subcategory.
+        # Prompt
+        prompt = f"""Analyze this image and classify it into ONE of the following categories and subcategories.
 
 Available Categories and Subcategories:
 {category_list}
 
 Instructions:
-1. Carefully examine the image
-2. Identify what item/object is shown in the image
-3. Match it to the MOST APPROPRIATE category and subcategory from the list above
-4. Return ONLY a JSON object in this exact format (no additional text):
+1. Identify the object in the image.
+2. Match it to the MOST APPROPRIATE category and subcategory.
+3. Return ONLY a JSON object:
 {{"category": "Category Name", "subcategory": "Subcategory Name"}}
 
-If the subcategory list is empty or you cannot determine a specific subcategory, use "General" as the subcategory.
-If the image doesn't match any category well, use the closest match.
+If no subcategory applies, use "General".
+"""
 
-Be precise and return only the JSON."""
-
-        # Call OpenAI API
+        # API Call
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -117,27 +123,23 @@ Be precise and return only the JSON."""
             max_tokens=300
         )
 
-        # Parse response
         result_text = response.choices[0].message.content.strip()
 
-        # Remove markdown code blocks if present
+        # Remove markdown formatting if any
         if result_text.startswith("```"):
             result_text = result_text.split("```")[1]
             if result_text.startswith("json"):
                 result_text = result_text[4:]
         result_text = result_text.strip()
 
-        # Parse JSON
-        import json
         classification = json.loads(result_text)
-
         return classification.get("category"), classification.get("subcategory"), None
 
     except Exception as e:
         return None, None, str(e)
 
 def save_report(report):
-    """Save report to CSV safely with error handling"""
+    """Save report to CSV safely"""
     try:
         df = pd.DataFrame([report])
         if os.path.exists(CSV_FILE):
@@ -168,227 +170,176 @@ def save_uploaded_file(uploaded_file):
         st.error(f"Error saving file: {str(e)}")
         return None
 
-# Page configuration
+# ---------------------------------------------------------
+# Streamlit Page Configuration
+# ---------------------------------------------------------
 st.set_page_config(
     page_title="Smart Swachh Portal",
     page_icon="♻️",
     layout="wide"
 )
 
-# Sidebar for API Key
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
-    api_key = st.text_input("OpenAI API Key", type="password", help="Enter your OpenAI API key for image classification")
+    api_key = st.text_input("OpenAI API Key", type="password")
     st.markdown("---")
-    st.markdown("### 📊 About Classification")
-    st.info("Upload an image and the AI will automatically classify it into the appropriate category and subcategory.")
-    st.markdown("---")
-    st.markdown("### 🔒 Privacy")
-    st.caption("Your API key is not stored and images are processed securely.")
+    st.info("Upload an image to auto-classify it into waste category.")
+    st.caption("Your API key and images are not stored permanently.")
 
+# ---------------------------------------------------------
 # Header
+# ---------------------------------------------------------
 st.title("♻️ Smart Swachh – Citizen Waste Reporting Portal")
 st.markdown("### 🧾 Submit Waste Collection Request")
 st.markdown("---")
 
-# Create form
-with st.form(key="waste_report_form", clear_on_submit=True):
+# ---------------------------------------------------------
+# STEP 1: AI Classification (Outside Form)
+# ---------------------------------------------------------
+st.header("📸 Upload Image for Auto-Classification")
 
-    # Section 1: Personal Details
+uploaded_photo = st.file_uploader(
+    "Upload an image of the item *",
+    type=["jpg", "jpeg", "png"],
+    help="Upload a clear image for automatic classification"
+)
+
+if uploaded_photo:
+    col_img1, col_img2 = st.columns([1, 2])
+    with col_img1:
+        st.image(uploaded_photo, caption="Uploaded Image", use_container_width=True)
+    with col_img2:
+        if api_key:
+            if st.button("🤖 Classify Image with AI"):
+                with st.spinner("Analyzing image..."):
+                    category, subcategory, error = classify_image_with_openai(uploaded_photo, api_key)
+                    if error:
+                        st.error(f"Classification error: {error}")
+                    else:
+                        st.session_state.classified_category = category
+                        st.session_state.classified_subcategory = subcategory
+                        st.success(f"✅ Classified as: **{category} → {subcategory}**")
+        else:
+            st.warning("⚠️ Please enter your OpenAI API key in the sidebar.")
+
+st.markdown("---")
+
+# ---------------------------------------------------------
+# STEP 2: Waste Report Form
+# ---------------------------------------------------------
+with st.form(key="waste_report_form", clear_on_submit=True):
+    # Section 1: Personal
     st.header("👤 Personal Details")
     col1, col2 = st.columns(2)
-
     with col1:
-        name = st.text_input("Full Name *", placeholder="Enter your full name")
-        phone = st.text_input("Phone Number *", placeholder="10-digit mobile number")
-
+        name = st.text_input("Full Name *")
+        phone = st.text_input("Phone Number *", placeholder="10-digit number")
     with col2:
-        email = st.text_input("Email ID *", placeholder="your.email@example.com")
+        email = st.text_input("Email ID *")
 
     st.markdown("---")
 
-    # Section 2: Location Details
+    # Section 2: Location
     st.header("📍 Location Details")
-
     col3, col4 = st.columns(2)
     with col3:
-        lat = st.text_input("Latitude (optional)", placeholder="e.g., 12.9716")
+        lat = st.text_input("Latitude (optional)")
     with col4:
-        lon = st.text_input("Longitude (optional)", placeholder="e.g., 77.5946")
+        lon = st.text_input("Longitude (optional)")
 
-    address = st.text_area("Full Address *", placeholder="Enter complete address with area, city, and pincode", height=100)
-    landmark = st.text_input("Landmark (optional)", placeholder="e.g., Near Bus Stop, Opposite Park")
-
-    st.markdown("---")
-
-    # Section 3: Upload Image (moved up)
-    st.header("📸 Upload Image for Auto-Classification")
-    uploaded_photo = st.file_uploader(
-        "Upload an image of the item *",
-        type=["jpg", "jpeg", "png"],
-        help="Upload a clear image for automatic classification"
-    )
-
-    if uploaded_photo:
-        col_img1, col_img2 = st.columns([1, 2])
-        with col_img1:
-            st.image(uploaded_photo, caption="Uploaded Image", use_container_width=True)
-
-        with col_img2:
-            if api_key:
-                if st.form_submit_button("🤖 Classify Image with AI", type="secondary"):
-                    with st.spinner("Analyzing image..."):
-                        category, subcategory, error = classify_image_with_openai(uploaded_photo, api_key)
-
-                        if error:
-                            st.error(f"Classification error: {error}")
-                        else:
-                            st.session_state.classified_category = category
-                            st.session_state.classified_subcategory = subcategory
-                            st.success(f"✅ Classified as: **{category}** → **{subcategory}**")
-            else:
-                st.warning("⚠️ Please enter your OpenAI API key in the sidebar to enable auto-classification")
+    address = st.text_area("Full Address *", height=80)
+    landmark = st.text_input("Landmark (optional)")
 
     st.markdown("---")
 
-    # Section 4: Waste Details
+    # Section 3: Waste Details
     st.header("🗑️ Item Details")
 
-    # Show classification results if available
     if st.session_state.classified_category:
-        st.success(f"🤖 AI Classification: **{st.session_state.classified_category}** → **{st.session_state.classified_subcategory}**")
+        st.success(f"🤖 AI Classification: {st.session_state.classified_category} → {st.session_state.classified_subcategory}")
 
     col5, col6 = st.columns(2)
-
     with col5:
-        # Use classified category as default if available
         category_list = ["Select Category"] + list(CATEGORIES.keys())
         default_category_idx = 0
         if st.session_state.classified_category and st.session_state.classified_category in CATEGORIES:
             default_category_idx = category_list.index(st.session_state.classified_category)
 
-        category = st.selectbox(
-            "Category *",
-            category_list,
-            index=default_category_idx,
-            help="Select the category (auto-filled from AI classification)"
-        )
+        category = st.selectbox("Category *", category_list, index=default_category_idx)
 
-        # Get subcategories
         if category != "Select Category":
             subcategories = CATEGORIES.get(category, [])
             if not subcategories:
                 subcategory = "General"
-                st.info("This category has no subcategories. Using 'General'.")
+                st.info("No subcategories available.")
             else:
-                # Use classified subcategory as default if available
                 default_subcat_idx = 0
                 if (st.session_state.classified_subcategory and
                     st.session_state.classified_subcategory in subcategories):
                     default_subcat_idx = subcategories.index(st.session_state.classified_subcategory)
-
-                subcategory = st.selectbox(
-                    "Subcategory *",
-                    subcategories,
-                    index=default_subcat_idx,
-                    help="Select the subcategory (auto-filled from AI classification)"
-                )
+                subcategory = st.selectbox("Subcategory *", subcategories, index=default_subcat_idx)
         else:
-            subcategory = st.selectbox("Subcategory *", ["Select category first"])
+            subcategory = "N/A"
 
     with col6:
-        volume = st.slider("Approx. Volume (in liters) *", 1, 500, 10, help="Estimate the total volume")
-        weight = st.slider("Approx. Weight (in kg) *", 1, 200, 5, help="Estimate the total weight")
+        volume = st.slider("Approx. Volume (L) *", 1, 500, 10)
+        weight = st.slider("Approx. Weight (Kg) *", 1, 200, 5)
 
     st.markdown("---")
 
-    # Section 5: Collection Window
+    # Collection Window
     st.header("🕒 Collection Window")
-
     col7, col8 = st.columns(2)
-
     with col7:
-        collection_date = st.date_input(
-            "Preferred Collection Date *",
-            min_value=date.today(),
-            help="Select a date from today onwards"
-        )
-
+        collection_date = st.date_input("Preferred Date *", min_value=date.today())
     with col8:
-        collection_time = st.time_input(
-            "Preferred Collection Time *",
-            value=time(9, 0),
-            help="Select preferred collection time"
-        )
+        collection_time = st.time_input("Preferred Time *", value=time(9, 0))
 
     st.markdown("---")
 
-    # Additional Notes
+    # Notes
     st.header("📝 Additional Notes")
-    notes = st.text_area(
-        "Any special instructions or comments? (optional)",
-        placeholder="e.g., Gate code, specific location details, handling instructions",
-        height=80
-    )
+    notes = st.text_area("Any special instructions?", height=70)
 
-    # Submit button
     st.markdown("---")
-    col_submit, col_empty = st.columns([1, 3])
+    submit_button = st.form_submit_button("📤 Submit Report", use_container_width=True)
 
-    with col_submit:
-        submit_button = st.form_submit_button("📤 Submit Report", use_container_width=True)
-
-# Handle form submission
+# ---------------------------------------------------------
+# Submission Handling
+# ---------------------------------------------------------
 if submit_button:
-    # Validation
     errors = []
-
-    if not name or not name.strip():
+    if not name.strip():
         errors.append("❌ Full Name is required")
-
-    if not phone:
-        errors.append("❌ Phone Number is required")
-    elif not validate_phone(phone):
-        errors.append("❌ Please enter a valid 10-digit Indian mobile number")
-
-    if not email:
-        errors.append("❌ Email ID is required")
-    elif not validate_email(email):
-        errors.append("❌ Please enter a valid email address")
-
-    if not address or not address.strip():
-        errors.append("❌ Full Address is required")
-
+    if not phone or not validate_phone(phone):
+        errors.append("❌ Invalid phone number")
+    if not email or not validate_email(email):
+        errors.append("❌ Invalid email ID")
+    if not address.strip():
+        errors.append("❌ Address is required")
     if not uploaded_photo:
-        errors.append("❌ Please upload an image of the item")
-
+        errors.append("❌ Image upload required")
     if category == "Select Category":
-        errors.append("❌ Please select a Category (or use AI classification)")
-
+        errors.append("❌ Please select a valid Category")
     if (lat or lon) and not validate_coordinates(lat, lon):
-        errors.append("❌ Invalid coordinates. Latitude must be between -90 and 90, Longitude between -180 and 180")
+        errors.append("❌ Invalid coordinates")
 
-    # Display errors or submit
     if errors:
-        st.error("### ⚠️ Please fix the following errors:")
-        for error in errors:
-            st.error(error)
+        st.error("### ⚠️ Please fix the following:")
+        for e in errors:
+            st.error(e)
     else:
-        # Save uploaded file
-        photo_filename = None
-        if uploaded_photo:
-            photo_filename = save_uploaded_file(uploaded_photo)
-
-        # Create report dictionary
+        photo_filename = save_uploaded_file(uploaded_photo)
         report = {
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Name": name.strip(),
             "Phone": phone,
             "Email": email.strip(),
-            "Latitude": lat if lat else "N/A",
-            "Longitude": lon if lon else "N/A",
+            "Latitude": lat or "N/A",
+            "Longitude": lon or "N/A",
             "Address": address.strip(),
-            "Landmark": landmark.strip() if landmark else "N/A",
+            "Landmark": landmark or "N/A",
             "Category": category,
             "Subcategory": subcategory,
             "AI_Classified": "Yes" if st.session_state.classified_category else "No",
@@ -396,58 +347,30 @@ if submit_button:
             "Weight(Kg)": weight,
             "Collection_Date": collection_date.strftime("%Y-%m-%d"),
             "Collection_Time": collection_time.strftime("%H:%M"),
-            "Photo": photo_filename if photo_filename else "No photo uploaded",
-            "Notes": notes.strip() if notes else "N/A"
+            "Photo": photo_filename or "N/A",
+            "Notes": notes.strip() or "N/A"
         }
 
-        # Save report
         if save_report(report):
-            st.success("### ✅ Your report has been submitted successfully!")
+            st.success("### ✅ Report submitted successfully!")
             st.balloons()
+            st.write("#### 📋 Summary:")
+            st.json(report)
 
-            # Display summary
-            st.markdown("### 📋 Submission Summary")
-
-            col_summary1, col_summary2 = st.columns(2)
-
-            with col_summary1:
-                st.markdown("**Personal Details:**")
-                st.write(f"👤 Name: {report['Name']}")
-                st.write(f"📱 Phone: {report['Phone']}")
-                st.write(f"📧 Email: {report['Email']}")
-
-                st.markdown("**Location:**")
-                st.write(f"📍 Address: {report['Address']}")
-                if report['Landmark'] != "N/A":
-                    st.write(f"🚩 Landmark: {report['Landmark']}")
-
-            with col_summary2:
-                st.markdown("**Item Details:**")
-                st.write(f"🗑️ Category: {report['Category']}")
-                st.write(f"📦 Type: {report['Subcategory']}")
-                if report['AI_Classified'] == "Yes":
-                    st.write("🤖 AI Classified: Yes")
-                st.write(f"📏 Volume: {report['Volume(L)']} liters")
-                st.write(f"⚖️ Weight: {report['Weight(Kg)']} kg")
-
-                st.markdown("**Collection Schedule:**")
-                st.write(f"📅 Date: {report['Collection_Date']}")
-                st.write(f"🕐 Time: {report['Collection_Time']}")
-
-            st.info("📧 You will receive a confirmation email shortly with your request ID. Our team will contact you for collection scheduling.")
-
-            # Reset classification state
+            # Reset classification
             st.session_state.classified_category = None
             st.session_state.classified_subcategory = None
             st.session_state.form_submitted = True
 
+# ---------------------------------------------------------
 # Footer
+# ---------------------------------------------------------
 st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: #666; padding: 20px;'>
         <p>♻️ Smart Swachh Initiative | Making cities cleaner, one report at a time</p>
-        <p>For queries, contact: support@smartswachh.gov.in | Helpline: 1800-XXX-XXXX</p>
+        <p>For queries: support@smartswachh.gov.in | Helpline: 1800-XXX-XXXX</p>
     </div>
     """,
     unsafe_allow_html=True
