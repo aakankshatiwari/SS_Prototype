@@ -21,7 +21,14 @@ except ImportError:
     try:
         from euri.langchain import create_chat_model
     except ImportError:
-        from euriai import create_chat_model
+        try:
+            from euriai.client import create_chat_model
+        except ImportError as e:
+            raise ImportError(
+                "❌ Euri AI SDK not found. Please install it using:\n"
+                "   pip install euriai\n\n"
+                "If you're running inside Euron platform, ensure the 'euriai' module is available."
+            ) from e
 
 
 # =========================
